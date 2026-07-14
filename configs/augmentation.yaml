@@ -1,0 +1,32 @@
+model:
+  init_args:
+    augmentations:
+      - name: AugmentationSequential
+        init_args:
+           random_apply: 1
+           p: 0.7
+        augmentations:
+          - name: ColorJitter
+            init_args:
+              p: 0.5
+              brightness: 0.2
+              contrast: 0.2
+              saturation: 0.2
+              hue: 0.1
+          - name: GaussianBlur
+            init_args:
+              p: 0.5
+      - name: RandomHorizontalFlip
+        init_args:
+          p: 0.5
+      - name: RandomVerticalFlip
+        init_args:
+          p: 0.5
+      - name: RandomRotate90
+        init_args:
+          p: 0.5
+      - name: RandomBrightnessContrast
+        init_args:
+          p: 0.5
+          brightness_limit: 0.2
+          contrast_limit: 0.2

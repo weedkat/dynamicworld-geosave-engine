@@ -1,0 +1,40 @@
+run_name: DynamicWorld
+
+trainer:
+  max_epochs: 100
+  log_every_n_steps: 10
+  callbacks:
+
+model:
+  class_path: geosave_engine.ml.tasks.SemanticSegmentationTask
+  init_args:
+    stages:
+      encoder: dinov3
+      decoder: dpt
+      head: dense
+    optimizer: AdamW.split
+    scheduler: CosineAnnealingLR
+    loss: CELoss
+    config:
+      optimizer:
+        weight_decay: 0.01
+        encoder_lr: 0.0001
+        decoder_lr: 0.001
+      scheduler:
+        T_max: 100
+    threshold_calibration_config:
+      metric: f1
+
+data:
+  class_path: geosave_engine.ml.tasks.SemanticSegmentationDataModule
+  init_args:
+    train_root: data/dynamicworld/train
+    val_root: data/dynamicworld/val
+    test_root: data/dynamicworld/test
+    batch_size: 16
+    num_workers: 4
+    dtype_override:
+      cloud_mask: torch.bool
+      dynamicworld: torch.int64
+    pipeline:
+      class_path: modules.data_pipeline.Pipeline

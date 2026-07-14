@@ -1,0 +1,38 @@
+model:
+  init_args:
+    image_key: sentinel_2_l1c
+    label_key: dynamicworld
+    mask_key: cloud_mask
+    ignore_index: 255
+    class_map:
+      0: water
+      1: trees
+      2: grass
+      3: flooded_vegetation
+      4: crops
+      5: shrub_and_scrub
+      6: built
+      7: bare
+    color_map:
+      0: "#419bdf"
+      1: "#397d49"
+      2: "#88b053"
+      3: "#7a87c6"
+      4: "#e49635"
+      5: "#dfc35a"
+      6: "#c4281b"
+      7: "#a59b8f"
+    band_map:
+      0: "B01"
+      1: "B02"
+      2: "B03"
+      3: "B04"
+      4: "B05"
+      5: "B06"
+      6: "B07"
+      7: "B08"
+      8: "B09"
+      9: "B10"
+      10: "B11"
+      11: "B12"
+      12: "B8A"
