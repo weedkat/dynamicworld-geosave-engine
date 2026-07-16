@@ -16,6 +16,7 @@ model:
     scheduler: CosineAnnealingLR
     loss: CELoss
     config:
+      encoder:
       optimizer:
         weight_decay: 0.01
         encoder_lr: 0.0001
@@ -28,12 +29,15 @@ model:
 data:
   class_path: geosave_engine.ml.tasks.SemanticSegmentationDataModule
   init_args:
-    train_root: data/dynamicworld/train
-    val_root: data/dynamicworld/val
-    test_root: data/dynamicworld/test
-    batch_size: 16
+    train_root: data/test_pipeline/train
+    val_root: data/test_pipeline/val
+    test_root: data/test_pipeline/test
+    batch_size: 2
     num_workers: 4
+    sel_bands:
+      sentinel_2_l1c: ["B04", "B03", "B02"]  # RGB
     dtype_override:
+      sentinel_2_l1c: torch.float32
       cloud_mask: torch.bool
       dynamicworld: torch.int64
     pipeline:

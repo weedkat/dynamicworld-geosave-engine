@@ -21,6 +21,14 @@ L1C_BANDS = [
     "B09", "B10", "B11", "B12", "B8A",
 ]
 
+# DynamicWorld paper's model input set: all bands except B01/B8A/B09/B10 —
+# fetched anyway (L1C_BANDS above) since cloud-mask derivation needs them,
+# but the saved sentinel_2_l1c layer only carries what the model actually
+# takes. odc-stac already resamples every band onto one geobox (bilinear by
+# default, matching the paper) at StacSource.load time — no separate
+# upscaling step needed here.
+DW_MODEL_BANDS = ["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B11", "B12"]
+
 
 class Pipeline(GeoPipeline):
     """Sentinel-2 imagery + cloud/shadow mask + NDVI for one anchor.
@@ -54,13 +62,19 @@ class Pipeline(GeoPipeline):
 
     def preprocess(self, raw: dict[str, GeoTile]) -> dict[str, GeoTile]:
         s2 = raw["sentinel_2_l1c"]
+        # Cloud mask/NDVI derive from the full 13-band fetch (they need
+        # B01/B8A/B09/B10) — select down to the model's own input bands
+        # only after they're computed.
         cloud_mask = self._ingest_cloud_mask(s2)
         ndvi = self._ingest_ndvi(s2)
+        s2_model = s2.with_data(s2.data.sel(band=DW_MODEL_BANDS))
         # Tag descriptions last: cloud_mask/ndvi derive from s2 via with_np, which
         # carries s2's metadata along — tagging s2 first would leak its description
         # into both, then clash with theirs.
         return {
-            "sentinel_2_l1c": s2.with_metadata({"description": "Sentinel-2 L1C imagery (all bands)"}),
+            "sentinel_2_l1c": s2_model.with_metadata(
+                {"description": f"Sentinel-2 L1C imagery ({len(DW_MODEL_BANDS)} bands, DynamicWorld input set)"}
+            ),
             "cloud_mask": cloud_mask.with_metadata({"description": "Cloud and shadow mask, 0=clear, 1=cloud/shadow"}),
             "ndvi": ndvi.with_metadata({"description": "Normalized Difference Vegetation Index"}),
         }
