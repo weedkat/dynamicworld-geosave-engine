@@ -9,9 +9,10 @@ encoding (see ../data/dynamicworld_raw/README.txt), so it lives here, not in
 the general-purpose Pipeline.
 
 Imagery and label are two fully independent steps, not bundled into one
-Pipeline: save_dataset() writes the imagery layers untouched, then the label
-is written straight into each anchor's already-existing .geostack folder.
-class_map/color_map for the *remapped* classes live in configs/metadata.yaml
+Pipeline: Pipeline.ingest() builds the imagery layers untouched, and this
+script attaches the label to each yielded sample (via GeoStack.add) before
+the one save — no separate pass, no reload. class_map/color_map for the
+*remapped* classes live in configs/metadata.yaml
 (read by SemanticSegmentationTask at train time), not here — nothing in the
 training path reads GeoTile.metadata, so duplicating them into the saved
 tile would just be a second, driftable copy of the same information.
@@ -22,16 +23,21 @@ nesting happens to be per split — not hardcoded here. README/metadata files
 (not raster data) are copied alongside the ingested output too, same
 relative layout, so the dataset carries its own provenance docs.
 """
+import logging
 import shutil
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-from geosave_engine.geodata.pipeline import GeotiffSource, save_dataset
 from geosave_engine.geodata.tile import GeoTile, remap
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent)) # allow imports from workspace/ without installing the package
+
 from modules.data_pipeline import Pipeline
 
+log = logging.getLogger(__name__)
 load_dotenv()
 
 RAW_ROOT = Path("data/dynamicworld_raw")
@@ -73,7 +79,8 @@ def find_groups(raw_dir: Path) -> list[Path]:
     One cheap pass — just filesystem metadata (rglob + path.parent), no
     anchors loaded — so scoping out the whole raw tree's structure up front
     costs nothing worth avoiding. Anchor loading is the actually heavy step
-    (GDAL open per file); that stays lazy, per group, via GeotiffSource.
+    (GDAL open per file); that stays deferred until `ingest_split`'s own
+    per-group loop.
 
     Args:
         raw_dir: Raw split root (e.g. data/dynamicworld_raw/train).
@@ -93,19 +100,20 @@ def ingest_split(raw_dir: Path, out_root: Path) -> None:
             group's anchors save to out_root/<same relative subfolder>.
     """
     for group_dir in tqdm(find_groups(raw_dir), desc=f"Ingesting {raw_dir.name}", unit="group"):
-        # save_dataset and the labels loop below both need this group's
-        # anchors — materialize once here (bounded to one group's files,
-        # not the whole raw tree), since to_anchors() is a one-shot generator.
-        anchors = list(GeotiffSource(src=group_dir).to_anchors())
+        anchor_paths = [p for p in sorted(group_dir.glob("*.tif"))]
         root = out_root / group_dir.relative_to(raw_dir)
-        save_dataset(Pipeline(), anchors, root, save_stac=["sentinel_2_l1c"])
+        pipeline = Pipeline()
 
-        for anchor in tqdm(anchors, desc=f"Labels {group_dir.name}", unit="anchor", leave=False):
+        for anchor_path in tqdm(anchor_paths, desc=f"Ingesting {group_dir.name}", unit="anchor", leave=False):
+            anchor = GeoTile.from_geotiff(anchor_path, load_data=True)
             geostack_dir = root / f"{anchor.stem}.geostack"
-            label_path = geostack_dir / "dynamicworld.zarr"
-            if not geostack_dir.exists() or label_path.exists():
-                continue  # imagery ingest failed, or label already written
-            build_label(anchor).to_zarr(label_path)
+            if geostack_dir.exists():
+                continue  # already ingested
+            for stack in pipeline.ingest(anchor):
+                try:
+                    stack.add("dynamicworld", build_label(anchor)).save(geostack_dir, save_stac=["sentinel_2_l1c"])
+                except Exception as e:
+                    log.error("Failed to save a sample for %s: %s", anchor.stem, e)
 
 
 def copy_docs(raw_root: Path, out_root: Path) -> None:

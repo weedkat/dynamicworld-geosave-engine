@@ -1,4 +1,4 @@
-from geosave_engine.ml.core import GeosaveCLI
+from geosave_engine.ml.cli import GeosaveCLI
 
 
 if __name__ == "__main__":

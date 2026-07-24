@@ -1,5 +1,5 @@
 from pathlib import Path
-from geosave_engine.utils.archives import extract_zip, cleanup_zip
+from geosave_engine.geodata.utils.archives import extract_zip, cleanup_zip
 
 def extract_and_rearrange_dw(zip_path: Path, extract_to: Path) -> None:
 
