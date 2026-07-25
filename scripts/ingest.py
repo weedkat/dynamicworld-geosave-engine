@@ -13,10 +13,10 @@ Pipeline: Pipeline.ingest() builds the imagery layers untouched, and this
 script attaches the label to each yielded sample (flattening the pipeline's
 own GeoStack positionally into a new one alongside it, via GeoStack's
 constructor) before the one save — no separate pass, no reload. class_map/color_map for the
-*remapped* classes live in configs/metadata.yaml
-(read by SemanticSegmentationTask at train time), not here — nothing in the
-training path reads GeoTile.metadata, so duplicating them into the saved
-tile would just be a second, driftable copy of the same information.
+*remapped* classes live in configs/metadata.yaml, read by SemanticSegmentationTask at
+train time; build_label() reads that same file (not a hand-duplicated literal) to also
+set the label tile's own plot_meta, purely so a saved sample renders readably via
+.plot() — nothing in the training path touches plot_meta.
 
 Output is grouped to mirror the raw data's own folder structure (e.g.
 train/Experts/EH/1/, train/Non_expert/WorkForce/EH/1/), whatever that
@@ -29,6 +29,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
 from tqdm import tqdm
 
@@ -47,6 +48,13 @@ OUT_ROOT = Path("data/dynamicworld")
 
 LABEL_BAND_NAME = "label"
 LABEL_NODATA = 255  # matches configs/metadata.yaml's ignore_index
+
+# Same class_map/color_map SemanticSegmentationTask reads from configs/metadata.yaml at
+# train time — read once here too so build_label()'s saved tile can self-render via
+# .plot(), without hand-duplicating the class names/colors as a second literal.
+_label_metadata = yaml.safe_load(Path("configs/metadata.yaml").read_text())["model"]["init_args"]
+LABEL_CLASS_MAP: dict[int, str] = _label_metadata["class_map"]
+LABEL_COLOR_MAP: dict[int, str] = _label_metadata["color_map"]
 
 # Raw Tier 1 class values (README.txt) -> remapped 0..7 schema (configs/metadata.yaml's
 # class_map). Safe to apply sequentially: each dst value equals an already-processed
@@ -71,7 +79,11 @@ def build_label(anchor: GeoTile) -> GeoTile:
     label = remap(anchor, LABEL_REMAP)
     da = label.data.isel(band=[0])  # select the first band (assuming single-band label)
     label = label.with_data(da.assign_coords(band=["label"]))
-    return label.with_nodata(LABEL_NODATA).with_metadata({"description": "Remapped DynamicWorld labels"})
+    return (
+        label.with_nodata(LABEL_NODATA)
+        .with_metadata({"description": "Remapped DynamicWorld labels"})
+        .with_plot_meta(class_map=LABEL_CLASS_MAP, color_map=LABEL_COLOR_MAP)
+    )
 
 
 def find_groups(raw_dir: Path) -> list[Path]:
