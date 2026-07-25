@@ -10,8 +10,9 @@ the general-purpose Pipeline.
 
 Imagery and label are two fully independent steps, not bundled into one
 Pipeline: Pipeline.ingest() builds the imagery layers untouched, and this
-script attaches the label to each yielded sample (via GeoStack.add) before
-the one save — no separate pass, no reload. class_map/color_map for the
+script attaches the label to each yielded sample (flattening the pipeline's
+own GeoStack positionally into a new one alongside it, via GeoStack's
+constructor) before the one save — no separate pass, no reload. class_map/color_map for the
 *remapped* classes live in configs/metadata.yaml
 (read by SemanticSegmentationTask at train time), not here — nothing in the
 training path reads GeoTile.metadata, so duplicating them into the saved
@@ -31,7 +32,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-from geosave_engine.geodata.tile import GeoTile, remap
+from geosave_engine.geodata.tile import GeoStack, GeoTile, remap
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent)) # allow imports from workspace/ without installing the package
 
@@ -109,11 +110,14 @@ def ingest_split(raw_dir: Path, out_root: Path) -> None:
             geostack_dir = root / f"{anchor.stem}.geostack"
             if geostack_dir.exists():
                 continue  # already ingested
-            for stack in pipeline.ingest(anchor):
-                try:
-                    stack.add("dynamicworld", build_label(anchor)).save(geostack_dir, save_stac=["sentinel_2_l1c"])
-                except Exception as e:
-                    log.error("Failed to save a sample for %s: %s", anchor.stem, e)
+            
+            stack = next(pipeline.ingest(anchor))
+            try:
+                GeoStack(stack, dynamicworld=build_label(anchor)).save(
+                    geostack_dir, save_stac=["sentinel_2_l1c"]
+                )
+            except Exception as e:
+                log.error("Failed to save a sample for %s: %s", anchor.stem, e)
 
 
 def copy_docs(raw_root: Path, out_root: Path) -> None:

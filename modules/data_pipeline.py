@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Any
 
 import numpy as np
 import torch
@@ -36,19 +35,15 @@ DW_MODEL_BANDS = ["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B11", "B12"]
 class Pipeline(GeoPipeline):
     """Sentinel-2 imagery + cloud/shadow mask + NDVI for one anchor.
 
-    Imagery only — DynamicWorld label prep is a separate, project-specific
-    step (see ``workspace/scripts/ingest.py``), attached to each sample this
-    pipeline's ``ingest()`` yields before that script's own single save. Not
-    this class's concern: label remapping doesn't generalize across
-    projects the way STAC-driven imagery ingest does.
+    This pipeline is a concrete example of how to use GeoPipeline to build a
+    multi-layer sample from a single anchor. It fetches Sentinel-2 L1C imagery
+    from the Copernicus Data Space Ecosystem STAC endpoint, derives a cloud/shadow mask 
+    and NDVI from it, and returns a dict of GeoTile layers.
     """
     @cached_property
     def sources(self) -> dict[str, StacSource]:
-        """Built lazily on first real fetch — importing/instantiating Pipeline
-        alone must not cost a live STAC network call."""
         stac_client = StacClient.cdse()
-        # temporal_slots=1 (scene granularity, StacSource default) — preprocess()
-        # below assumes exactly one time step per raw sample, no loop.
+        # temporal_slots=1 because dynamicworld dataset is per scene
         return {
             "sentinel_2_l1c": stac_client.source(
                 "sentinel-2-l1c", bands=L1C_BANDS, max_nodata_fraction=0.1, temporal_slots=1
@@ -58,7 +53,7 @@ class Pipeline(GeoPipeline):
     def preprocess(self, raw: dict[str, GeoTile]) -> dict[str, GeoTile]:
         s2 = raw["sentinel_2_l1c"]
         # temporal_slots=1 on the source (see `sources` above) — exactly one
-        # scene per sample, so drop straight to (band, y, x), no time loop.
+        # scene per sample, so drop straight to (band, y, x)
         ds = s2.data.isel(time=0)
         sun_az = s2.stac[0].properties.get("view:sun_azimuth", 0.0)
 
@@ -85,65 +80,62 @@ class Pipeline(GeoPipeline):
 
         ndvi = compute_ndvi(nir=ds.sel(band="B08").values, red=ds.sel(band="B04").values).astype(np.float32)
 
-        s2_model = s2.with_data(s2.data.sel(band=DW_MODEL_BANDS))
-        # Tag descriptions last: cloud_mask/ndvi derive from s2 via with_np, which
-        # carries s2's metadata along — tagging s2 first would leak its description
-        # into both, then clash with theirs.
-        return {
-            "sentinel_2_l1c": s2_model.with_metadata(
+        s2_tile = (
+            s2.with_data(s2.data.sel(band=DW_MODEL_BANDS))
+            .with_metadata(
                 {"description": f"Sentinel-2 L1C imagery ({len(DW_MODEL_BANDS)} bands, DynamicWorld input set)"}
-            ),
-            "cloud_mask": s2.with_np(mask).with_metadata(
-                {"description": "Cloud and shadow mask, 0=clear, 1=cloud/shadow"}
-            ),
-            "ndvi": s2.with_np(ndvi).with_metadata(
-                {"description": "Normalized Difference Vegetation Index"}
-            ),
+            )
+            .with_plot_meta(
+                rgb_bands=("B04", "B03", "B02")
+            )
+        )
+
+        cloud_mask_tile = (
+            s2.with_np(mask).with_metadata(
+                {"description": "Cloud and shadow mask"}
+            )
+            .with_plot_meta(
+                class_map={0: "clear", 1: "cloud/shadow"}, color_map={0: "#FFFFFF", 1: "#000000"}
+            )
+        )
+
+        ndvi_tile = s2.with_np(ndvi).with_metadata(
+            {"description": "Normalized Difference Vegetation Index"}
+        )
+
+        return {
+            "sentinel_2_l1c": s2_tile,
+            "cloud_mask": cloud_mask_tile,
+            "ndvi": ndvi_tile,
         }
 
-    def context(self, tiles: dict[str, GeoTile]) -> dict[str, Any]:
-        """PrithviTL's + Clay's raw forward() inputs, off this sample's sentinel tile.
+    def context(self, tiles: dict[str, GeoTile]) -> dict[str, torch.Tensor]:
+        """PrithviTL's + Clay's raw forward() inputs for this sample.
 
-        Sentinel tile = `tiles["sentinel_2_l1c"]` — the real STAC-sourced
-        imagery layer. Datetime comes from `tile.times[0]` — the
-        real per-scene acquisition timestamp off the loaded data's own
-        `time` coordinate (`temporal_slots=1` on `sources` above guarantees
-        exactly one) — not `tile.start`/`tile.end` (`GeoAnchor.datetime`),
-        which `parse_datetime_range` widens a reduced-precision query date
-        into a whole-day range; using that here would flatten every sample
-        from this pipeline to midnight, losing the real acquisition hour
-        `Clay`'s `time` wants and coarsening `PrithviTL`'s `temporal_coords`
-        to day-of-year only.
-
-        Every key/shape here mirrors a real forward() param name exactly —
-        `temporal_coords`/`location_coords` for `PrithviTL.forward_pyramid`
-        (mandatory ctx keys, see `encoder/prithvi.py`), `time`/`latlon`/`gsd`
-        for `Clay.forward` (raw, normalized internally — see `encoder/clay.py`).
-        `Clay.forward_pyramid` doesn't declare `time`/`latlon`/`gsd` as ctx
-        requirements (its own docstring explains why), so those three just
-        sit unused in ctx for a Clay chain — no model-specific reshape stage
-        downstream either way, `ContextChain` merges this dict straight into
-        whichever stage's own params match.
+        Keys mirror real forward() param names: `temporal_coords`/
+        `location_coords` for `PrithviTL.forward_pyramid`, `time`/
+        `latlon` for `Clay.forward`. Clay doesn't require these as ctx
+        keys, so they sit unused in a Clay chain — harmless, `ContextChain`
+        only pulls what a stage's own forward declares.
 
         Args:
             tiles: Layer name to GeoTile map — same sample `preprocess` built.
 
         Returns:
-            Per-sample (no batch dim — `stack_samples` adds it):
-                temporal_coords: (num_frames=1, 2) float32, (year,
-                    day_of_year), day_of_year 0-indexed (Jan 1st = 0).
-                location_coords: (2,) float32, (lat, lon) in degrees.
-                time: (2,) float32, raw (iso_week, hour) — Clay normalizes internally.
-                latlon: (2,) float32, raw (lat, lon) in degrees — Clay normalizes internally.
-                gsd: scalar float32, this tile's real resolution in meters.
+            {
+                "temporal_coords": (1, 2) float32, (year, day_of_year), 0-indexed,
+                "location_coords": (2,) float32, (lat, lon) degrees,
+                "time": (2,) float32, raw (iso_week, hour),
+                "latlon": (2,) float32, raw (lat, lon) degrees,
+            }
         """
         tile = tiles["sentinel_2_l1c"]
         lon, lat = tile.centroid
         acquired = tile.times[0]
         day_of_year = acquired.timetuple().tm_yday - 1  # tm_yday is 1-indexed; Prithvi wants 0-indexed
         return {
-            "temporal_coords": torch.tensor([[acquired.year, day_of_year]], dtype=torch.float32),
-            "location_coords": torch.tensor([lat, lon], dtype=torch.float32),
-            "time": torch.tensor([acquired.isocalendar().week, acquired.hour], dtype=torch.float32),
-            "latlon": torch.tensor([lat, lon], dtype=torch.float32),
+            "temporal_coords": torch.tensor([[acquired.year, day_of_year]], dtype=torch.float32), # (1, 2)
+            "location_coords": torch.tensor([lat, lon], dtype=torch.float32), # (2,)
+            "time": torch.tensor([acquired.isocalendar().week, acquired.hour], dtype=torch.float32), # (2,)
+            "latlon": torch.tensor([lat, lon], dtype=torch.float32), # (2,)
         }
