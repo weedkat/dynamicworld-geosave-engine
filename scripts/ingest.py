@@ -112,24 +112,24 @@ def ingest_split(raw_dir: Path, out_root: Path) -> None:
         out_root: Output split root (e.g. data/dynamicworld/train) — each
             group's anchors save to out_root/<same relative subfolder>.
     """
+    pipeline = Pipeline()
+    
     for group_dir in tqdm(find_groups(raw_dir), desc=f"Ingesting {raw_dir.name}", unit="group"):
         anchor_paths = [p for p in sorted(group_dir.glob("*.tif"))]
         root = out_root / group_dir.relative_to(raw_dir)
-        pipeline = Pipeline()
 
         for anchor_path in tqdm(anchor_paths, desc=f"Ingesting {group_dir.name}", unit="anchor", leave=False):
             anchor = GeoTile.from_geotiff(anchor_path, load_data=True)
             geostack_dir = root / f"{anchor.stem}.geostack"
             if geostack_dir.exists():
                 continue  # already ingested
-            
-            stack = next(pipeline.ingest(anchor))
             try:
+                stack = next(pipeline.ingest(anchor.to_anchor()))
                 GeoStack(stack, dynamicworld=build_label(anchor)).save(
                     geostack_dir, save_stac=["sentinel_2_l1c"]
                 )
             except Exception as e:
-                log.error("Failed to save a sample for %s: %s", anchor.stem, e)
+                log.error("Failed to ingest/save a sample for %s: %s", anchor.stem, e)
 
 
 def copy_docs(raw_root: Path, out_root: Path) -> None:
