@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from functools import cached_property
-
 import numpy as np
 import torch
 from scipy.ndimage import binary_opening
@@ -40,12 +38,14 @@ class Pipeline(GeoPipeline):
     from the Copernicus Data Space Ecosystem STAC endpoint, derives a cloud/shadow mask 
     and NDVI from it, and returns a dict of GeoTile layers.
     """
-    @cached_property
+
+    def __init__(self) -> None:
+        self.client = StacClient.cdse()
+
     def sources(self) -> dict[str, StacSource]:
-        stac_client = StacClient.cdse()
         # temporal_slots=1 because dynamicworld dataset is per scene
         return {
-            "sentinel_2_l1c": stac_client.source(
+            "sentinel_2_l1c": self.client.source(
                 "sentinel-2-l1c", bands=L1C_BANDS, max_nodata_fraction=0.1, temporal_slots=1
             )
         }
