@@ -184,12 +184,12 @@ def ingest_split(raw_dir: Path, out_root: Path) -> None:
 
         for anchor_path in tqdm(anchor_paths, desc=f"Ingesting {group_dir.name}", unit="anchor", leave=False):
             anchor = GeoTile.from_geotiff(anchor_path, load_data=True)
-            geostack_dir = root / f"{anchor.stem}.geostack"
-            if geostack_dir.exists():
+            path = root / f"{anchor.stem}.zarr"
+            if path.exists():
                 continue  # already ingested
             try:
                 stack = next(pipeline.ingest(anchor.to_anchor()))
-                GeoStack(stack, **build_label(anchor)).save(geostack_dir)
+                GeoStack(stack, **build_label(anchor)).save(path)
             except Exception as e:
                 log.error("Failed to ingest/save a sample for %s: %s", anchor.stem, e)
 
