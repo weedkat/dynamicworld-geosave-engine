@@ -3,20 +3,23 @@
 Each raw .tif is both the anchor (location + datetime, from its own
 ``-YYYYMMDD`` filename suffix) *and* the label source itself — Pipeline
 fetches matching Sentinel-2 imagery via STAC for the anchor, and this script
-separately remaps the anchor's own raw pixels into the ``dynamicworld``
-layer. Label remapping is specific to this exact raw data release's class
-encoding (see ../data/dynamicworld_raw/README.txt), so it lives here, not in
-the general-purpose Pipeline.
+separately remaps the anchor's own raw pixels into a ``dynamicworld``
+layer, keeping the untouched original as ``dynamicworld_raw`` alongside it
+(GeoStack's zarr groups make both cheap to keep). Label remapping is
+specific to this exact raw data release's class encoding (see
+../data/dynamicworld_raw/README.txt), so it lives here, not in the
+general-purpose Pipeline.
 
 Imagery and label are two fully independent steps, not bundled into one
 Pipeline: Pipeline.ingest() builds the imagery layers untouched, and this
-script attaches the label to each yielded sample (flattening the pipeline's
-own GeoStack positionally into a new one alongside it, via GeoStack's
-constructor) before the one save — no separate pass, no reload. class_map/color_map for the
-*remapped* classes live in configs/metadata.yaml, read by SemanticSegmentationTask at
-train time; build_label() reads that same file (not a hand-duplicated literal) to also
-set the label tile's own plot_meta, purely so a saved sample renders readably via
-.plot() — nothing in the training path touches plot_meta.
+script attaches both label layers to each yielded sample (flattening the
+pipeline's own GeoStack positionally into a new one alongside them, via
+GeoStack's constructor) before the one save — no separate pass, no reload.
+LABEL_CLASS_MAP/LABEL_COLOR_MAP mirror configs/metadata.yaml's
+model.init_args.class_map/color_map by hand (kept inline, not read from
+that file, so this script stays self-contained) — only used for
+plot_meta so a saved sample renders readably via .plot(); nothing in the
+training path touches plot_meta.
 
 Output is grouped to mirror the raw data's own folder structure (e.g.
 train/Experts/EH/1/, train/Non_expert/WorkForce/EH/1/), whatever that
@@ -29,7 +32,6 @@ import shutil
 import sys
 from pathlib import Path
 
-import yaml
 from dotenv import load_dotenv
 from tqdm import tqdm
 
@@ -37,24 +39,75 @@ from geosave_engine.geodata.tile import GeoStack, GeoTile, remap
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent)) # allow imports from workspace/ without installing the package
 
-from modules.data_pipeline import Pipeline
+from modules.data_pipeline_l2a import Pipeline
 
 log = logging.getLogger(__name__)
 load_dotenv()
 
 RAW_ROOT = Path("data/dynamicworld_raw")
-RAW_DIRS = {split: RAW_ROOT / split for split in ("train", "val", "test")}
+RAW_DIRS = {
+    "train": RAW_ROOT / "train",
+    "val": RAW_ROOT / "val",
+    "test": RAW_ROOT / "test"
+}
 OUT_ROOT = Path("data/dynamicworld")
 
-LABEL_BAND_NAME = "label"
 LABEL_NODATA = 255  # matches configs/metadata.yaml's ignore_index
 
-# Same class_map/color_map SemanticSegmentationTask reads from configs/metadata.yaml at
-# train time — read once here too so build_label()'s saved tile can self-render via
-# .plot(), without hand-duplicating the class names/colors as a second literal.
-_label_metadata = yaml.safe_load(Path("configs/metadata.yaml").read_text())["model"]["init_args"]
-LABEL_CLASS_MAP: dict[int, str] = _label_metadata["class_map"]
-LABEL_COLOR_MAP: dict[int, str] = _label_metadata["color_map"]
+# https://doi.pangaea.de/10.1594/PANGAEA.933475
+DW_CLASS_MAP = { 
+    0: "No Data",
+    1: "Water",
+    2: "Trees",
+    3: "Grass",
+    4: "Flooded Vegetation",
+    5: "Crops",
+    6: "Scrub",
+    7: "Built Area",
+    8: "Bare Ground",
+    9: "Snow and Ice",
+    10: "Cloud",
+}
+
+DW_COLOR_MAP = {
+    0: "#000000",
+    1: "#419bdf",
+    2: "#397d49",
+    3: "#88b053",
+    4: "#7a87c6",
+    5: "#e49635",
+    6: "#dfc35a",
+    7: "#c4281b",
+    8: "#a59b8f",
+    9: "#f0f0f0",
+    10: "#d3d3d3"
+}
+
+# Remapped 0..7 schema (mirrors configs/metadata.yaml's model.init_args.class_map/color_map —
+# keep both in sync by hand if that file changes).
+LABEL_CLASS_MAP = {
+    0: "Water",
+    1: "Trees",
+    2: "Grass",
+    3: "Flooded Vegetation",
+    4: "Crops",
+    5: "Scrub",
+    6: "Built Area",
+    7: "Bare Ground",
+    255: "Ignore",
+}
+
+LABEL_COLOR_MAP = {
+    0: "#419bdf",
+    1: "#397d49",
+    2: "#88b053",
+    3: "#7a87c6",
+    4: "#e49635",
+    5: "#dfc35a",
+    6: "#c4281b",
+    7: "#a59b8f",
+    255: "#000000",
+}
 
 # Raw Tier 1 class values (README.txt) -> remapped 0..7 schema (configs/metadata.yaml's
 # class_map). Safe to apply sequentially: each dst value equals an already-processed
@@ -74,16 +127,27 @@ LABEL_REMAP = {
 }
 
 
-def build_label(anchor: GeoTile) -> GeoTile:
-    """Remap the anchor's own raw pixel values into the target label schema."""
-    label = remap(anchor, LABEL_REMAP)
-    da = label.data.isel(band=[0])  # select the first band (assuming single-band label)
-    label = label.with_data(da.assign_coords(band=["label"]))
-    return (
-        label.with_nodata(LABEL_NODATA)
-        .with_metadata({"description": "Remapped DynamicWorld labels"})
-        .with_plot_meta(class_map=LABEL_CLASS_MAP, color_map=LABEL_COLOR_MAP)
+def build_label(anchor: GeoTile) -> dict[str, GeoTile]:
+    """Raw + remapped DynamicWorld label, as two GeoStack layers sharing one anchor.
+
+    Single-band label, so both squeeze straight to (y, x) — no band name needed.
+
+    Returns:
+        {"dynamicworld_raw": <untouched Tier 1 values>, "dynamicworld": <remapped 0..7>}
+    """
+    raw = anchor.rebase(
+        data=anchor.data.isel(band=0),
+        metadata={"description": "Raw DynamicWorld labels (Tier 1 raw class values)"},
+        plot_meta={"class_map": DW_CLASS_MAP, "color_map": DW_COLOR_MAP},
     )
+    remapped = remap(anchor, LABEL_REMAP)
+    remapped = remapped.rebase(
+        data=remapped.data.isel(band=0),
+        nodata=LABEL_NODATA,
+        metadata={"description": "Remapped DynamicWorld labels"},
+        plot_meta={"class_map": LABEL_CLASS_MAP, "color_map": LABEL_COLOR_MAP},
+    )
+    return {"dynamicworld_raw": raw, "dynamicworld": remapped}
 
 
 def find_groups(raw_dir: Path) -> list[Path]:
@@ -125,9 +189,7 @@ def ingest_split(raw_dir: Path, out_root: Path) -> None:
                 continue  # already ingested
             try:
                 stack = next(pipeline.ingest(anchor.to_anchor()))
-                GeoStack(stack, dynamicworld=build_label(anchor)).save(
-                    geostack_dir, save_stac=["sentinel_2_l1c"]
-                )
+                GeoStack(stack, **build_label(anchor)).save(geostack_dir)
             except Exception as e:
                 log.error("Failed to ingest/save a sample for %s: %s", anchor.stem, e)
 

@@ -80,27 +80,19 @@ class Pipeline(GeoPipeline):
 
         ndvi = compute_ndvi(nir=ds.sel(band="B08").values, red=ds.sel(band="B04").values).astype(np.float32)
 
-        s2_tile = (
-            s2.with_data(s2.data.sel(band=DW_MODEL_BANDS))
-            .with_metadata(
-                {"description": f"Sentinel-2 L1C imagery ({len(DW_MODEL_BANDS)} bands, DynamicWorld input set)"}
-            )
-            .with_plot_meta(
-                rgb_bands=("B04", "B03", "B02")
-            )
+        s2_tile = s2.rebase(
+            data=s2.data.sel(band=DW_MODEL_BANDS),
+            metadata={"description": f"Sentinel-2 L1C imagery ({len(DW_MODEL_BANDS)} bands, DynamicWorld input set)"},
+            plot_meta={"rgb_bands": ("B04", "B03", "B02")},
         )
 
-        cloud_mask_tile = (
-            s2.with_np(mask).with_metadata(
-                {"description": "Cloud and shadow mask"}
-            )
-            .with_plot_meta(
-                class_map={0: "clear", 1: "cloud/shadow"}, color_map={0: "#FFFFFF", 1: "#000000"}
-            )
+        cloud_mask_tile = s2.to_geotile(mask).rebase(
+            metadata={"description": "Cloud and shadow mask"},
+            plot_meta={"class_map": {0: "clear", 1: "cloud/shadow"}, "color_map": {0: "#FFFFFF", 1: "#000000"}},
         )
 
-        ndvi_tile = s2.with_np(ndvi).with_metadata(
-            {"description": "Normalized Difference Vegetation Index"}
+        ndvi_tile = s2.to_geotile(ndvi).rebase(
+            metadata={"description": "Normalized Difference Vegetation Index"}
         )
 
         return {
