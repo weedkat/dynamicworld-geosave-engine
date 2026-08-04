@@ -1,6 +1,6 @@
 model:
   init_args:
-    image_key: sentinel_2_l1c
+    image_key: sentinel_2_l2a
     label_key: dynamicworld
     mask_key: cloud_mask
     ignore_index: 255

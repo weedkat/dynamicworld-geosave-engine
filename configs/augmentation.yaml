@@ -1,12 +1,66 @@
 model:
   init_args:
     augmentations:
+      # ---------------------------------------------------------
+      # 1. GEOMETRIC TRANSFORMS
+      # ---------------------------------------------------------
+      # Simulates different altitudes/resolutions. The wider scale forces 
+      # the model to recognize features regardless of pixel density.
       - name: RandomResizedCrop
         init_args:
           size: [224, 224]
+          scale: [0.6, 1.0]      
+          ratio: [0.8, 1.2]      
+          resample: bilinear
+          p: 1.0
+
+      # D4 Symmetries. Satellite imagery has no intrinsic "up". 
+      # Flips and rotations provide massive, free dataset multiplication.
       - name: RandomHorizontalFlip
         init_args:
           p: 0.5
+          
       - name: RandomVerticalFlip
         init_args:
+          p: 0.5
+          
+      # RandomRotation gives true 360-degree invariance. 
+      # 'reflection' padding prevents black (0,0,0) triangles at the corners 
+      # which models often overfit to as a "no-data" artifact.
+      - name: RandomRotation
+        init_args:
+          degrees: 180.0         
+          padding_mode: reflection 
+          p: 0.5
+
+      # ---------------------------------------------------------
+      # 2. PHOTOMETRIC TRANSFORMS
+      # ---------------------------------------------------------
+      # Combats sensor variance, atmospheric haze, and seasonal changes.
+      # Keeps hue shift low (0.05) so water doesn't accidentally turn purple,
+      # but varies brightness and contrast heavily to simulate cloud shadows/sun angles.
+      - name: ColorJiggle
+        init_args:
+          brightness: 0.25
+          contrast: 0.25
+          saturation: 0.2
+          hue: 0.05
+          p: 0.6
+          
+      # Generates fractal noise shadows to mimic cloud cover, 
+      # forcing the network to learn robust features in darkened patches.
+      - name: RandomPlasmaShadow
+        init_args:
+          roughness: [0.2, 0.6]
+          shade_intensity: [-0.4, -0.1]
+          p: 0.3
+
+      # ---------------------------------------------------------
+      # 3. REGULARIZATION
+      # ---------------------------------------------------------
+      # Blends patches of images and their corresponding labels/boxes.
+      # Kornia handles the data_keys routing automatically.
+      - name: RandomCutMixV2
+        init_args:
+          data_keys: ["input", "mask"] # Ensures Kornia mixes both image and label
           p: 0.5

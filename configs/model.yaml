@@ -15,6 +15,7 @@ model:
     optimizer: AdamW.split
     scheduler: CosineAnnealingLR
     loss: CELoss
+
     config:
       encoder:
       optimizer:
@@ -23,15 +24,16 @@ model:
         decoder_lr: 0.001
       scheduler:
         T_max: 100
+        
     threshold_calibration_config:
       metric: f1
 
 data:
   class_path: geosave_engine.ml.tasks.SemanticSegmentationDataModule
   init_args:
-    train_root: data/test_pipeline/train
-    val_root: data/test_pipeline/val
-    test_root: data/test_pipeline/test
+    train_root: data/dynamicworld/train
+    val_root: data/dynamicworld/val
+    test_root: data/dynamicworld/test
     batch_size: 2
     num_workers: 4
     sel_bands:
