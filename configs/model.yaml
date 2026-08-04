@@ -1,3 +1,7 @@
+__include__:
+  - ./rgb_augmentation.yaml
+  - ./rgb_metadata.yaml
+
 model_name: DynamicWorld
 
 trainer:
@@ -24,7 +28,7 @@ model:
         decoder_lr: 0.001
       scheduler:
         T_max: 100
-        
+
     threshold_calibration_config:
       metric: f1
 
