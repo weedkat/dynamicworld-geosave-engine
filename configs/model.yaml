@@ -35,9 +35,9 @@ data:
     batch_size: 2
     num_workers: 4
     sel_bands:
-      sentinel_2_l1c: ["B04", "B03", "B02"]  # RGB
+      sentinel_2_l2a: ["B04", "B03", "B02"]  # RGB
     dtype_override:
-      sentinel_2_l1c: torch.float32
+      sentinel_2_l2a: torch.float32
       cloud_mask: torch.bool
       dynamicworld: torch.int64
     pipeline:

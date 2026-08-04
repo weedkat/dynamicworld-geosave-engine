@@ -1,0 +1,155 @@
+# lightning.pytorch==2.6.1
+seed_everything: 0
+trainer:
+  accelerator: auto
+  strategy: auto
+  devices: auto
+  num_nodes: 1
+  precision: null
+  logger:
+  - class_path: lightning.pytorch.loggers.TensorBoardLogger
+    init_args:
+      save_dir: artifacts
+      name: DynamicWorld
+      log_graph: true
+  callbacks:
+  - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      monitor: val_loss
+      mode: min
+      save_top_k: 1
+      filename: epoch={epoch:02d}-val_loss={val_loss:.4f}
+      save_last: true
+  - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+    init_args:
+      logging_interval: epoch
+  - class_path: lightning.pytorch.callbacks.RichProgressBar
+    init_args: {}
+  fast_dev_run: false
+  max_epochs: 1
+  min_epochs: null
+  max_steps: -1
+  min_steps: null
+  max_time: null
+  limit_train_batches: 2.0
+  limit_val_batches: 2.0
+  limit_test_batches: null
+  limit_predict_batches: null
+  overfit_batches: 0.0
+  val_check_interval: null
+  check_val_every_n_epoch: 1
+  num_sanity_val_steps: null
+  log_every_n_steps: 1
+  enable_checkpointing: null
+  enable_progress_bar: null
+  enable_model_summary: null
+  accumulate_grad_batches: 1
+  gradient_clip_val: null
+  gradient_clip_algorithm: null
+  deterministic: null
+  benchmark: null
+  inference_mode: true
+  use_distributed_sampler: true
+  profiler: null
+  detect_anomaly: false
+  barebones: false
+  plugins: null
+  sync_batchnorm: false
+  reload_dataloaders_every_n_epochs: 0
+  default_root_dir: null
+  enable_autolog_hparams: true
+  model_registry: null
+model:
+  class_path: geosave_engine.ml.tasks.SemanticSegmentationTask
+  init_args:
+    stages:
+      encoder: dinov3
+      decoder: dpt
+      head: dense
+    class_map:
+      '0': water
+      '1': trees
+      '2': grass
+      '3': flooded_vegetation
+      '4': crops
+      '5': shrub_and_scrub
+      '6': built
+      '7': bare
+    band_map:
+      '0': B04
+      '1': B03
+      '2': B02
+    input_size: 224
+    image_key: sentinel_2_l1c
+    label_key: dynamicworld
+    mask_key: cloud_mask
+    ignore_index: 255
+    upsample_output: true
+    color_map:
+      0: '#419bdf'
+      1: '#397d49'
+      2: '#88b053'
+      3: '#7a87c6'
+      4: '#e49635'
+      5: '#dfc35a'
+      6: '#c4281b'
+      7: '#a59b8f'
+    mean_norm: null
+    std_norm: null
+    overlap_ratio: 0.5
+    pad_size: 64
+    config:
+      encoder: null
+      optimizer:
+        weight_decay: 0.01
+        encoder_lr: 0.0001
+        decoder_lr: 0.001
+      scheduler:
+        T_max: 100
+    loss: CELoss
+    optimizer: AdamW.split
+    scheduler: CosineAnnealingLR
+    metrics: null
+    augmentations:
+    - name: RandomResizedCrop
+      init_args:
+        size:
+        - 224
+        - 224
+    - name: RandomHorizontalFlip
+      init_args:
+        p: 0.5
+    - name: RandomVerticalFlip
+      init_args:
+        p: 0.5
+    threshold_calibration_config:
+      metric: f1
+    log_image_every_n_epochs: 2
+data:
+  class_path: geosave_engine.ml.tasks.SemanticSegmentationDataModule
+  init_args:
+    train_root: data/test_pipeline/train
+    val_root: data/test_pipeline/val
+    test_root: data/test_pipeline/test
+    predict_root: null
+    sel_bands:
+      sentinel_2_l1c:
+      - B04
+      - B03
+      - B02
+    dtype_override:
+      sentinel_2_l1c: torch.float32
+      cloud_mask: torch.bool
+      dynamicworld: torch.int64
+    pipeline:
+      class_path: modules.data_pipeline.Pipeline
+    batch_size: 2
+    num_workers: 4
+    pin_memory: false
+    prefetch_factor: null
+    persistent_workers: false
+run_name: DynamicWorld
+optimizer: null
+lr_scheduler: null
+ckpt_path: null
+weights_only: null

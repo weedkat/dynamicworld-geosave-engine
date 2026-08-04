@@ -1,0 +1,64 @@
+stages:
+  encoder: dinov3
+  decoder: dpt
+  head: dense
+class_map:
+  '0': water
+  '1': trees
+  '2': grass
+  '3': flooded_vegetation
+  '4': crops
+  '5': shrub_and_scrub
+  '6': built
+  '7': bare
+band_map:
+  '0': B04
+  '1': B03
+  '2': B02
+input_size: 224
+image_key: sentinel_2_l1c
+label_key: dynamicworld
+mask_key: cloud_mask
+ignore_index: 255
+upsample_output: true
+color_map:
+  0: '#419bdf'
+  1: '#397d49'
+  2: '#88b053'
+  3: '#7a87c6'
+  4: '#e49635'
+  5: '#dfc35a'
+  6: '#c4281b'
+  7: '#a59b8f'
+mean_norm: null
+std_norm: null
+overlap_ratio: 0.5
+pad_size: 64
+config:
+  encoder: null
+  optimizer:
+    weight_decay: 0.01
+    encoder_lr: 0.0001
+    decoder_lr: 0.001
+  scheduler:
+    T_max: 100
+loss: CELoss
+optimizer: AdamW.split
+scheduler: CosineAnnealingLR
+metrics: null
+augmentations:
+- name: RandomResizedCrop
+  init_args:
+    size:
+    - 224
+    - 224
+- name: RandomHorizontalFlip
+  init_args:
+    p: 0.5
+- name: RandomVerticalFlip
+  init_args:
+    p: 0.5
+threshold_calibration_config:
+  metric: f1
+log_image_every_n_epochs: 2
+_instantiator: lightning.pytorch.cli.instantiate_module

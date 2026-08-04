@@ -219,4 +219,4 @@ __marimo__/
 
 # large data
 data/
-artifacts/
+*.ckpt
